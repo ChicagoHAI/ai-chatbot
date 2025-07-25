@@ -1,13 +1,8 @@
-import {
-  convertToModelMessages,
-  createUIMessageStream,
-  JsonToSseTransformStream,
-  smoothStream,
-  stepCountIs,
-  streamText,
-} from 'ai';
+// AI SDK utilities are no longer required here because we proxy the
+// FastAPI backend directly instead of using the built-in language model
+// helpers.
 import { auth, type UserType } from '@/app/(auth)/auth';
-import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
+// system prompt utilities removed
 import {
   createStreamId,
   deleteChatById,
@@ -17,26 +12,20 @@ import {
   saveChat,
   saveMessages,
 } from '@/lib/db/queries';
-import { convertToUIMessages, generateUUID } from '@/lib/utils';
+import { generateUUID, getTextFromMessage } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
-import { createDocument } from '@/lib/ai/tools/create-document';
-import { updateDocument } from '@/lib/ai/tools/update-document';
-import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
-import { getWeather } from '@/lib/ai/tools/get-weather';
-import { isProductionEnvironment } from '@/lib/constants';
-import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
-import { geolocation } from '@vercel/functions';
-import {
-  createResumableStreamContext,
-  type ResumableStreamContext,
-} from 'resumable-stream';
+// Removed resumable-stream imports because we no longer rely on them.
 import { after } from 'next/server';
 import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
 import type { ChatModel } from '@/lib/ai/models';
 import type { VisibilityType } from '@/components/visibility-selector';
+import {
+  createResumableStreamContext,
+  type ResumableStreamContext,
+} from 'resumable-stream';
 
 export const maxDuration = 60;
 
@@ -122,16 +111,6 @@ export async function POST(request: Request) {
     }
 
     const messagesFromDb = await getMessagesByChatId({ id });
-    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
-
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
 
     await saveMessages({
       messages: [
@@ -146,78 +125,115 @@ export async function POST(request: Request) {
       ],
     });
 
+    // Create a streamId so the /stream resume endpoint can succeed and avoid
+    // duplicate reasoning / 404 errors.
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            selectedChatModel === 'chat-model-reasoning'
-              ? []
-              : [
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                ],
-          experimental_transform: smoothStream({ chunking: 'word' }),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: 'stream-text',
-          },
-        });
+    // ────────────────────────────────────────────────────────────
+    // STEP 1:  Call the RAG backend (FastAPI) and obtain an SSE
+    //          stream with plain text tokens ("data: TOKEN\n\n").
+    //
+    // IMPORTANT: the backend URL can be configured through the
+    //            BACKEND_URL env-var so that it works both locally
+    //            and in production.  A sensible default is the
+    //            docker-compose development address.
+    // ────────────────────────────────────────────────────────────
+    const backendBaseUrl = process.env.BACKEND_URL ?? 'http://localhost:8080';
+    const backendEndpoint = new URL('/api/chat/', backendBaseUrl).toString();
 
-        result.consumeStream();
+    // Build the request payload expected by the FastAPI endpoint.
+    const backendPayload = {
+      user_id: session.user.id,
+      message: getTextFromMessage(message),
+      conversation_id: null,
+      stream: true,
+      system_prompt: null,
+      temperature: 0.7,
+      max_tokens: 800,
+      show_context: false,
+      multifaceted: true,
+      top_k_per_facet: 3,
+      min_facets: 3,
+      max_facets: 6,
+    };
 
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          }),
-        );
+    const ragResponse = await fetch(backendEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-      generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            parts: message.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
-        });
+      body: JSON.stringify(backendPayload),
+    });
+
+    if (!ragResponse.ok || !ragResponse.body) {
+      throw new Error(`Backend error (${ragResponse.status}) while fetching ${backendEndpoint}`);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // STEP 2:  Convert the backend SSE stream into the AI-SDK UI
+    //          message stream protocol expected by the template.
+    // ────────────────────────────────────────────────────────────
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const assistantMessageId = generateUUID();
+    const textBlockId = generateUUID();
+    let accumulatedText = '';
+    let buffer = '';
+
+    const transformStream = new TransformStream<Uint8Array, Uint8Array>({
+      start() {},
+      transform(chunk, controller) {
+        // Forward chunk directly to client
+        controller.enqueue(chunk);
+
+        buffer += decoder.decode(chunk, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          const payload = part.slice(6);
+          if (!payload.trim().startsWith('{')) continue;
+          try {
+            const json = JSON.parse(payload);
+            if (
+              (json.type === 'text-delta' || json.type === 'textStart' || json.type === 'text-delta') &&
+              typeof json.delta === 'string'
+            ) {
+              accumulatedText += json.delta;
+            }
+          } catch (_) {}
+        }
       },
-      onError: () => {
-        return 'Oops, an error occurred!';
+      flush() {
+        saveMessages({
+          messages: [
+            {
+              id: assistantMessageId,
+              role: 'assistant',
+              parts: [{ type: 'text', text: accumulatedText }],
+              createdAt: new Date(),
+              attachments: [],
+              chatId: id,
+            },
+          ],
+        }).catch(console.error);
       },
     });
 
-    const streamContext = getStreamContext();
+    const proxyStream = ragResponse.body.pipeThrough(transformStream);
 
-    if (streamContext) {
-      return new Response(
-        await streamContext.resumableStream(streamId, () =>
-          stream.pipeThrough(new JsonToSseTransformStream()),
-        ),
-      );
-    } else {
-      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
-    }
+    return new Response(proxyStream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'x-vercel-ai-ui-message-stream': 'v1',
+      },
+    });
   } catch (error) {
     if (error instanceof ChatSDKError) {
       return error.toResponse();

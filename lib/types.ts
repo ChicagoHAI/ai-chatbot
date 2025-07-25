@@ -40,6 +40,7 @@ export type CustomUIDataTypes = {
   id: string;
   title: string;
   kind: ArtifactKind;
+  'data-retrieval': any;
   clear: null;
   finish: null;
 };
