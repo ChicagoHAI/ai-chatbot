@@ -1,8 +1,9 @@
-// AI SDK utilities are no longer required here because we proxy the
-// FastAPI backend directly instead of using the built-in language model
-// helpers.
+// Import AI SDK utilities for proper streaming
+import {
+  createUIMessageStream,
+  JsonToSseTransformStream,
+} from 'ai';
 import { auth, type UserType } from '@/app/(auth)/auth';
-// system prompt utilities removed
 import {
   createStreamId,
   deleteChatById,
@@ -16,7 +17,6 @@ import { generateUUID, getTextFromMessage } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
-// Removed resumable-stream imports because we no longer rely on them.
 import { after } from 'next/server';
 import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
@@ -125,115 +125,185 @@ export async function POST(request: Request) {
       ],
     });
 
-    // Create a streamId so the /stream resume endpoint can succeed and avoid
-    // duplicate reasoning / 404 errors.
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
     // ────────────────────────────────────────────────────────────
-    // STEP 1:  Call the RAG backend (FastAPI) and obtain an SSE
-    //          stream with plain text tokens ("data: TOKEN\n\n").
-    //
-    // IMPORTANT: the backend URL can be configured through the
-    //            BACKEND_URL env-var so that it works both locally
-    //            and in production.  A sensible default is the
-    //            docker-compose development address.
+    // Create AI SDK UI message stream that transforms backend data
     // ────────────────────────────────────────────────────────────
-    const backendBaseUrl = process.env.BACKEND_URL ?? 'http://localhost:8080';
-    const backendEndpoint = new URL('/api/chat/', backendBaseUrl).toString();
 
-    // Build the request payload expected by the FastAPI endpoint.
-    const backendPayload = {
-      user_id: session.user.id,
-      message: getTextFromMessage(message),
-      conversation_id: null,
-      stream: true,
-      system_prompt: null,
-      temperature: 0.7,
-      max_tokens: 800,
-      show_context: false,
-      multifaceted: true,
-      top_k_per_facet: 3,
-      min_facets: 3,
-      max_facets: 6,
-    };
+    const stream = createUIMessageStream({
+      execute: ({ writer: dataStream }) => {
+        // Create a readable stream that transforms the backend response
+        const backendStream = new ReadableStream({
+          async start(controller) {
+            try {
+              const backendBaseUrl = process.env.BACKEND_URL ?? 'http://localhost:8080';
+              const backendEndpoint = new URL('/api/chat/', backendBaseUrl).toString();
 
-    const ragResponse = await fetch(backendEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(backendPayload),
-    });
+              const backendPayload = {
+                user_id: session.user.id,
+                message: getTextFromMessage(message),
+                conversation_id: null,
+                stream: true,
+                system_prompt: null,
+                temperature: 0.7,
+                max_tokens: 8000,
+                show_context: false,
+                multifaceted: true,
+                top_k_per_facet: 3,
+                min_facets: 3,
+                max_facets: 6,
+              };
 
-    if (!ragResponse.ok || !ragResponse.body) {
-      throw new Error(`Backend error (${ragResponse.status}) while fetching ${backendEndpoint}`);
-    }
+              const ragResponse = await fetch(backendEndpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(backendPayload),
+              });
 
-    // ────────────────────────────────────────────────────────────
-    // STEP 2:  Convert the backend SSE stream into the AI-SDK UI
-    //          message stream protocol expected by the template.
-    // ────────────────────────────────────────────────────────────
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
+              if (!ragResponse.ok || !ragResponse.body) {
+                controller.error(new Error(`Backend error (${ragResponse.status})`));
+                return;
+              }
 
-    const assistantMessageId = generateUUID();
-    const textBlockId = generateUUID();
-    let accumulatedText = '';
-    let buffer = '';
+              const decoder = new TextDecoder();
+              const reader = ragResponse.body.getReader();
+              
+              const textBlockId = generateUUID();
+              let buffer = '';
+              let textBlockStarted = false;
 
-    const transformStream = new TransformStream<Uint8Array, Uint8Array>({
-      start() {},
-      transform(chunk, controller) {
-        // Forward chunk directly to client
-        controller.enqueue(chunk);
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-        buffer += decoder.decode(chunk, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() ?? '';
 
-        for (const part of parts) {
-          if (!part.startsWith('data: ')) continue;
-          const payload = part.slice(6);
-          if (!payload.trim().startsWith('{')) continue;
-          try {
-            const json = JSON.parse(payload);
-            if (
-              (json.type === 'text-delta' || json.type === 'textStart' || json.type === 'text-delta') &&
-              typeof json.delta === 'string'
-            ) {
-              accumulatedText += json.delta;
+                for (const part of parts) {
+                  if (!part.startsWith('data: ')) continue;
+                  const payload = part.slice(6);
+                  
+                  // Handle completion signal
+                  if (payload.trim() === '[DONE]') {
+                    if (textBlockStarted) {
+                      controller.enqueue({ type: 'text-end', id: textBlockId });
+                    }
+                    controller.enqueue({ type: 'finish' });
+                    controller.close();
+                    return;
+                  }
+                  
+                  if (!payload.trim().startsWith('{')) continue;
+                  
+                  try {
+                    const json = JSON.parse(payload);
+                    
+                    switch (json.type) {
+                      case 'reasoning-start':
+                        controller.enqueue({ 
+                          type: 'reasoning-start', 
+                          id: json.id 
+                        });
+                        break;
+                        
+                      case 'reasoning-delta':
+                        controller.enqueue({ 
+                          type: 'reasoning-delta', 
+                          id: json.id, 
+                          delta: json.delta 
+                        });
+                        break;
+                        
+                      case 'reasoning-end':
+                        controller.enqueue({ 
+                          type: 'reasoning-end', 
+                          id: json.id 
+                        });
+                        break;
+                        
+                      case 'text-start':
+                        if (!textBlockStarted) {
+                          textBlockStarted = true;
+                          controller.enqueue({ type: 'text-start', id: textBlockId });
+                        }
+                        break;
+                        
+                      case 'text-delta':
+                        if (!textBlockStarted) {
+                          textBlockStarted = true;
+                          controller.enqueue({ type: 'text-start', id: textBlockId });
+                        }
+                        if (typeof json.delta === 'string') {
+                          controller.enqueue({ 
+                            type: 'text-delta', 
+                            id: textBlockId, 
+                            delta: json.delta 
+                          });
+                        }
+                        break;
+                        
+                      case 'text-end':
+                        if (textBlockStarted) {
+                          controller.enqueue({ type: 'text-end', id: textBlockId });
+                          textBlockStarted = false;
+                        }
+                        break;
+                        
+                      case 'finish':
+                        // Backend finish signal - just pass through
+                        // Real completion happens with [DONE] signal
+                        controller.enqueue({ type: 'finish' });
+                        break;
+                    }
+                  } catch (e) {
+                    console.warn('Failed to parse backend stream JSON:', payload);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Backend stream error:', error);
+              controller.error(error);
             }
-          } catch (_) {}
-        }
+          }
+        });
+
+        // Use merge like the original - let AI SDK manage the stream lifecycle
+        dataStream.merge(backendStream);
       },
-      flush() {
-        saveMessages({
-          messages: [
-            {
-              id: assistantMessageId,
-              role: 'assistant',
-              parts: [{ type: 'text', text: accumulatedText }],
-              createdAt: new Date(),
-              attachments: [],
-              chatId: id,
-            },
-          ],
-        }).catch(console.error);
+      generateId: generateUUID,
+      onFinish: async ({ messages }) => {
+        await saveMessages({
+          messages: messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            parts: message.parts,
+            createdAt: new Date(),
+            attachments: [],
+            chatId: id,
+          })),
+        });
+      },
+      onError: () => {
+        return 'Oops, an error occurred!';
       },
     });
 
-    const proxyStream = ragResponse.body.pipeThrough(transformStream);
+    const streamContext = getStreamContext();
 
-    return new Response(proxyStream, {
-      headers: {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-        'x-vercel-ai-ui-message-stream': 'v1',
-      },
-    });
+    if (streamContext) {
+      return new Response(
+        await streamContext.resumableStream(streamId, () =>
+          stream.pipeThrough(new JsonToSseTransformStream()),
+        ),
+      );
+    } else {
+      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+    }
   } catch (error) {
     if (error instanceof ChatSDKError) {
       return error.toResponse();
