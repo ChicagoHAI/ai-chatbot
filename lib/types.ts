@@ -43,6 +43,20 @@ export type CustomUIDataTypes = {
   'data-retrieval': any;
   clear: null;
   finish: null;
+  hypotheses: Array<{
+    id: string;
+    title: string;
+    description: string;
+  }>;
+  'data-hypotheses': {
+    hypotheses: Array<{
+      id: string;
+      title: string;
+      description: string;
+    }>;
+    messageId?: string;
+    extractedAt: number;
+  };
 };
 
 export type ChatMessage = UIMessage<

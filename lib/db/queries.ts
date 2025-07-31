@@ -27,6 +27,12 @@ import {
   type DBMessage,
   type Chat,
   stream,
+  hypothesisFeedback,
+  hypothesis,
+  individualHypothesisFeedback,
+  type HypothesisFeedback,
+  type Hypothesis,
+  type IndividualHypothesisFeedback,
 } from './schema';
 import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
@@ -106,14 +112,24 @@ export async function saveChat({
 
 export async function deleteChatById({ id }: { id: string }) {
   try {
+    // Delete in proper order to handle foreign key constraints
+    // First delete votes
     await db.delete(vote).where(eq(vote.chatId, id));
+    
+    // Delete messages (this will cascade to delete hypotheses due to onDelete: 'cascade')
+    // and also delete any individual hypothesis feedback
     await db.delete(message).where(eq(message.chatId, id));
+    
+    // Delete streams
     await db.delete(stream).where(eq(stream.chatId, id));
 
+    // Finally delete the chat itself
     const [chatsDeleted] = await db
       .delete(chat)
       .where(eq(chat.id, id))
       .returning();
+    
+    console.log(`[deleteChatById] Successfully deleted chat ${id}`);
     return chatsDeleted;
   } catch (error) {
     throw new ChatSDKError(
@@ -533,6 +549,352 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     throw new ChatSDKError(
       'bad_request:database',
       'Failed to get stream ids by chat id',
+    );
+  }
+}
+
+// Hypothesis Feedback queries
+export async function getHypothesisFeedbackByMessageId({
+  messageId,
+  userId,
+}: {
+  messageId: string;
+  userId: string;
+}) {
+  try {
+    const feedback = await db
+      .select()
+      .from(hypothesisFeedback)
+      .where(
+        and(
+          eq(hypothesisFeedback.messageId, messageId),
+          eq(hypothesisFeedback.userId, userId)
+        )
+      )
+      .limit(1);
+
+    return feedback[0] || null;
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to get hypothesis feedback',
+    );
+  }
+}
+
+export async function saveHypothesisFeedback({
+  chatId,
+  messageId,
+  userId,
+  rating,
+  feedbackText,
+  feedbackType,
+  hypothesisRatings,
+}: {
+  chatId: string;
+  messageId: string;
+  userId: string;
+  rating: 'helpful' | 'not_helpful' | 'needs_improvement';
+  feedbackText?: string;
+  feedbackType?: 'quality' | 'novelty' | 'feasibility' | 'clarity' | 'other';
+  hypothesisRatings?: Record<string, 'helpful' | 'not_helpful' | 'needs_improvement'>;
+}) {
+  try {
+    const existingFeedback = await getHypothesisFeedbackByMessageId({
+      messageId,
+      userId,
+    });
+
+    if (existingFeedback) {
+      // Update existing feedback
+      const updatedFeedback = await db
+        .update(hypothesisFeedback)
+        .set({
+          rating,
+          feedbackText,
+          feedbackType,
+          hypothesisRatings,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(hypothesisFeedback.messageId, messageId),
+            eq(hypothesisFeedback.userId, userId)
+          )
+        )
+        .returning();
+
+      return updatedFeedback[0];
+    } else {
+      // Create new feedback
+      const newFeedback = await db
+        .insert(hypothesisFeedback)
+        .values({
+          chatId,
+          messageId,
+          userId,
+          rating,
+          feedbackText,
+          feedbackType,
+          hypothesisRatings,
+        })
+        .returning();
+
+      return newFeedback[0];
+    }
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to save hypothesis feedback',
+    );
+  }
+}
+
+export async function getHypothesisFeedbackStats({
+  messageId,
+}: {
+  messageId: string;
+}) {
+  try {
+    const stats = await db
+      .select({
+        rating: hypothesisFeedback.rating,
+        count: count(),
+      })
+      .from(hypothesisFeedback)
+      .where(eq(hypothesisFeedback.messageId, messageId))
+      .groupBy(hypothesisFeedback.rating);
+
+    return stats.reduce((acc, { rating, count }) => {
+      acc[rating] = count;
+      return acc;
+    }, {} as Record<string, number>);
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to get hypothesis feedback stats',
+    );
+  }
+}
+
+// ===== Individual Hypothesis Functions =====
+
+export async function saveHypotheses({
+  messageId,
+  hypotheses: hypothesisData,
+}: {
+  messageId: string;
+  hypotheses: Array<{
+    id: string;
+    title: string;
+    description: string;
+    orderIndex: number;
+  }>;
+}) {
+  try {
+    // First verify that the message exists
+    const messageExists = await db
+      .select({ id: message.id })
+      .from(message)
+      .where(eq(message.id, messageId))
+      .limit(1);
+    
+    if (messageExists.length === 0) {
+      console.error(`[saveHypotheses] Message ${messageId} not found in database`);
+      throw new Error(`Message ${messageId} not found`);
+    }
+    
+    // Delete existing hypotheses for this message (if any) - safer approach
+    const existingHypotheses = await db
+      .select()
+      .from(hypothesis)
+      .where(eq(hypothesis.messageId, messageId));
+    
+    if (existingHypotheses.length > 0) {
+      console.log(`[saveHypotheses] Deleting ${existingHypotheses.length} existing hypotheses for message ${messageId}`);
+      await db.delete(hypothesis).where(eq(hypothesis.messageId, messageId));
+    }
+
+    // Insert new hypotheses
+    if (hypothesisData.length > 0) {
+      const newHypotheses = await db
+        .insert(hypothesis)
+        .values(
+          hypothesisData.map((h) => ({
+            id: h.id,
+            messageId,
+            title: h.title,
+            description: h.description,
+            orderIndex: h.orderIndex,
+          }))
+        )
+        .returning();
+
+      console.log(`[saveHypotheses] Successfully saved ${newHypotheses.length} hypotheses for message ${messageId}`);
+      return newHypotheses;
+    }
+
+    return [];
+  } catch (error) {
+    console.error('[saveHypotheses] Database error:', error);
+    console.error('[saveHypotheses] MessageId:', messageId);
+    console.error('[saveHypotheses] Hypotheses data:', hypothesisData);
+    throw new ChatSDKError(
+      'bad_request:database',
+      `Failed to save hypotheses: ${error.message}`,
+    );
+  }
+}
+
+export async function getHypothesesByMessageId({
+  messageId,
+}: {
+  messageId: string;
+}) {
+  try {
+    const hypotheses = await db
+      .select()
+      .from(hypothesis)
+      .where(eq(hypothesis.messageId, messageId))
+      .orderBy(asc(hypothesis.orderIndex));
+
+    return hypotheses;
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to get hypotheses',
+    );
+  }
+}
+
+export async function saveIndividualHypothesisFeedback({
+  hypothesisId,
+  userId,
+  rating,
+  feedbackText,
+  feedbackCategory,
+}: {
+  hypothesisId: string;
+  userId: string;
+  rating: 'helpful' | 'not_helpful' | 'needs_improvement';
+  feedbackText?: string;
+  feedbackCategory?: 'quality' | 'novelty' | 'feasibility' | 'clarity' | 'other';
+}) {
+  try {
+    // Check if feedback already exists
+    const existingFeedback = await db
+      .select()
+      .from(individualHypothesisFeedback)
+      .where(
+        and(
+          eq(individualHypothesisFeedback.hypothesisId, hypothesisId),
+          eq(individualHypothesisFeedback.userId, userId)
+        )
+      );
+
+    if (existingFeedback.length > 0) {
+      // Update existing feedback
+      const updatedFeedback = await db
+        .update(individualHypothesisFeedback)
+        .set({
+          rating,
+          feedbackText,
+          feedbackCategory,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(individualHypothesisFeedback.hypothesisId, hypothesisId),
+            eq(individualHypothesisFeedback.userId, userId)
+          )
+        )
+        .returning();
+
+      return updatedFeedback[0];
+    } else {
+      // Create new feedback
+      const newFeedback = await db
+        .insert(individualHypothesisFeedback)
+        .values({
+          hypothesisId,
+          userId,
+          rating,
+          feedbackText,
+          feedbackCategory,
+        })
+        .returning();
+
+      return newFeedback[0];
+    }
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to save individual hypothesis feedback',
+    );
+  }
+}
+
+export async function getIndividualHypothesisFeedback({
+  hypothesisId,
+  userId,
+}: {
+  hypothesisId: string;
+  userId?: string;
+}) {
+  try {
+    if (userId) {
+      // Get specific user's feedback
+      const feedback = await db
+        .select()
+        .from(individualHypothesisFeedback)
+        .where(
+          and(
+            eq(individualHypothesisFeedback.hypothesisId, hypothesisId),
+            eq(individualHypothesisFeedback.userId, userId)
+          )
+        );
+
+      return feedback[0] || null;
+    } else {
+      // Get all feedback for this hypothesis
+      const allFeedback = await db
+        .select()
+        .from(individualHypothesisFeedback)
+        .where(eq(individualHypothesisFeedback.hypothesisId, hypothesisId));
+
+      return allFeedback;
+    }
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to get individual hypothesis feedback',
+    );
+  }
+}
+
+export async function getIndividualHypothesisFeedbackStats({
+  hypothesisId,
+}: {
+  hypothesisId: string;
+}) {
+  try {
+    const stats = await db
+      .select({
+        rating: individualHypothesisFeedback.rating,
+        count: count(),
+      })
+      .from(individualHypothesisFeedback)
+      .where(eq(individualHypothesisFeedback.hypothesisId, hypothesisId))
+      .groupBy(individualHypothesisFeedback.rating);
+
+    return stats.reduce((acc, { rating, count }) => {
+      acc[rating] = count;
+      return acc;
+    }, {} as Record<string, number>);
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to get individual hypothesis feedback stats',
     );
   }
 }

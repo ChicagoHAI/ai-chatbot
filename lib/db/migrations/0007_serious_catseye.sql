@@ -1,0 +1,1 @@
+ALTER TABLE "HypothesisFeedback" ADD COLUMN "hypothesisRatings" json;

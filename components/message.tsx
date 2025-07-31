@@ -1,7 +1,7 @@
 'use client';
 import cx from 'classnames';
 import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { Vote } from '@/lib/db/schema';
 import { DocumentToolCall, DocumentToolResult } from './document';
 import { PencilEditIcon, SparklesIcon } from './icons';
@@ -16,12 +16,92 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
+import { HypothesisFeedback } from './hypothesis-feedback';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 
 // Type narrowing is handled by TypeScript's control flow analysis
 // The AI SDK provides proper discriminated unions for tool calls
+
+// Helper function to extract hypotheses from text content
+function extractHypothesesFromText(text: string): Array<{id: string, title: string, description: string}> {
+  console.log('[DEBUG] Extracting hypotheses from text, length:', text.length);
+  console.log('[DEBUG] First 500 chars of text:', text.substring(0, 500));
+  
+  const hypothesesMatch = text.match(/<!-- HYPOTHESES_START -->([\s\S]*?)<!-- HYPOTHESES_END -->/);
+  if (!hypothesesMatch) {
+    console.log('[DEBUG] No HYPOTHESES_START/END markers found');
+    return [];
+  }
+  
+  const hypothesesText = hypothesesMatch[1];
+  console.log('[DEBUG] Extracted hypotheses text:', hypothesesText.substring(0, 200) + '...');
+  
+  const hypotheses: Array<{id: string, title: string, description: string}> = [];
+  
+  // Parse each hypothesis using regex - match the actual format from backend
+  const hypothesisPattern = /\*\*Hypothesis (\d+):\s*([^*]+?)\*\*\s*\n([^*]+?)(?=\n\*\*Hypothesis|$)/gs;
+  let match;
+  
+  while ((match = hypothesisPattern.exec(hypothesesText)) !== null) {
+    const [, num, title, description] = match;
+    console.log(`[DEBUG] Found hypothesis ${num}:`, { title: title.trim(), description: description.trim().substring(0, 50) + '...' });
+    // Generate unique ID using timestamp and random string to avoid conflicts
+    const uniqueId = `hyp_${Date.now()}_${Math.random().toString(36).substring(2, 11)}_${num}`;
+    hypotheses.push({
+      id: uniqueId,
+      title: title.trim(),
+      description: description.trim()
+    });
+  }
+  
+  console.log('[DEBUG] Total hypotheses extracted:', hypotheses.length);
+  return hypotheses;
+}
+
+// Helper function to get hypotheses from message text parts
+function getHypothesesFromMessage(message: ChatMessage): Array<{id: string, title: string, description: string}> {
+  const textParts = message.parts.filter(part => part.type === 'text');
+  for (const part of textParts) {
+    if (part.text) {
+      const hypotheses = extractHypothesesFromText(part.text);
+      if (hypotheses.length > 0) {
+        console.log('[DEBUG] Found hypotheses in text content:', hypotheses.length);
+        return hypotheses;
+      }
+    }
+  }
+  return [];
+}
+
+// Helper function to save hypotheses to database
+async function saveHypothesesToDatabase(messageId: string, hypotheses: Array<{id: string, title: string, description: string}>) {
+  if (hypotheses.length === 0) return;
+  
+  try {
+    console.log('[DEBUG] Saving hypotheses to database:', hypotheses.length);
+    const hypothesesWithOrder = hypotheses.map((h, index) => ({
+      ...h,
+      orderIndex: index + 1,
+    }));
+
+    const response = await fetch('/api/message/' + messageId + '/hypotheses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hypotheses: hypothesesWithOrder }),
+    });
+
+    if (!response.ok) {
+      console.error('[DEBUG] Failed to save hypotheses:', response.statusText);
+    } else {
+      console.log('[DEBUG] Successfully saved hypotheses to database');
+    }
+  } catch (error) {
+    console.error('[DEBUG] Error saving hypotheses:', error);
+  }
+}
+
 
 const PurePreviewMessage = ({
   chatId,
@@ -48,7 +128,14 @@ const PurePreviewMessage = ({
     (part) => part.type === 'file',
   );
 
-  useDataStream();
+  const { dataStream } = useDataStream();
+  
+  // Streaming debug info - remove after testing
+  useEffect(() => {
+    if (message.role === 'assistant' && process.env.NODE_ENV === 'development') {
+      console.log(`[STREAMING] Message ${message.id} parts:`, message.parts?.length, 'isLoading:', isLoading);
+    }
+  }, [message.parts, isLoading, message.id, message.role]);
 
   return (
     <AnimatePresence>
@@ -99,8 +186,25 @@ const PurePreviewMessage = ({
               </div>
             )}
 
+            {(() => {
+              console.log('[DEBUG] Rendering message parts for message:', message.id, 'Parts count:', message.parts?.length || 0);
+              return null;
+            })()}
             {message.parts?.map((part, index) => {
               const { type } = part;
+              
+              // Debug logging for all parts
+              if (message.role === 'assistant') {
+                console.log('[DEBUG] Message part:', { 
+                  messageId: message.id,
+                  type, 
+                  index, 
+                  hasData: 'data' in part,
+                  partKeys: Object.keys(part),
+                  data: 'data' in part ? part.data : 'no data'
+                });
+              }
+              
               const key = `message-${message.id}-part-${index}`;
 
               if (type === 'reasoning' && part.text?.trim().length > 0) {
@@ -307,6 +411,23 @@ const PurePreviewMessage = ({
                   );
                 }
               }
+
+              if (type === 'data-hypotheses') {
+                const { id, data } = part;
+                console.log('[DEBUG] Rendering hypotheses data part:', data);
+                // Type assertion - check what we actually get
+                const hypothesesData = data as any;
+                return (
+                  <div key={id} className="mt-4">
+                    <HypothesisFeedback
+                      chatId={chatId}
+                      messageId={message.id}
+                      isHypothesisResponse={true}
+                      hypotheses={hypothesesData.hypotheses || hypothesesData || []}
+                    />
+                  </div>
+                );
+              }
             })}
 
             {!isReadonly && (
@@ -318,6 +439,32 @@ const PurePreviewMessage = ({
                 isLoading={isLoading}
               />
             )}
+
+            {/* Hypothesis feedback for assistant messages - parse from text content */}
+            {!isReadonly && !isLoading && message.role === 'assistant' && (() => {
+              console.log('[DEBUG] Checking for hypotheses, isLoading:', isLoading);
+              const hypotheses = getHypothesesFromMessage(message);
+              if (hypotheses.length > 0) {
+                console.log('[DEBUG] Rendering HypothesisFeedback with text-parsed hypotheses:', hypotheses.length);
+                
+                // Delay hypothesis saving to ensure message is persisted first
+                setTimeout(() => {
+                  saveHypothesesToDatabase(message.id, hypotheses).catch(console.error);
+                }, 2000);
+                
+                return (
+                  <HypothesisFeedback
+                    key={`feedback-${message.id}`}
+                    chatId={chatId}
+                    messageId={message.id}
+                    isHypothesisResponse={true}
+                    hypotheses={hypotheses}
+                  />
+                );
+              }
+              return null;
+            })()}
+
           </div>
         </div>
       </motion.div>
@@ -335,7 +482,7 @@ export const PreviewMessage = memo(
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
     if (!equal(prevProps.vote, nextProps.vote)) return false;
 
-    return false;
+    return false; // Return false to allow re-renders for streaming updates
   },
 );
 

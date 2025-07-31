@@ -20,24 +20,24 @@ function PureSuggestedActions({
 }: SuggestedActionsProps) {
   const suggestedActions = [
     {
-      title: 'What are the advantages',
-      label: 'of using Next.js?',
-      action: 'What are the advantages of using Next.js?',
+      title: 'Generate hypotheses about',
+      label: 'machine learning interpretability',
+      action: 'Generate testable hypotheses about improving machine learning model interpretability',
     },
     {
-      title: 'Write code to',
-      label: `demonstrate djikstra's algorithm`,
-      action: `Write code to demonstrate djikstra's algorithm`,
+      title: 'What novel approaches could',
+      label: 'address climate change?',
+      action: 'What novel approaches could address climate change based on recent research?',
     },
     {
-      title: 'Help me write an essay',
-      label: `about silicon valley`,
-      action: `Help me write an essay about silicon valley`,
+      title: 'Suggest hypotheses for',
+      label: 'quantum computing applications',
+      action: 'Suggest testable hypotheses for practical quantum computing applications',
     },
     {
-      title: 'What is the weather',
-      label: 'in San Francisco?',
-      action: 'What is the weather in San Francisco?',
+      title: 'Generate research ideas about',
+      label: 'neural network efficiency',
+      action: 'Generate research ideas about improving neural network training efficiency',
     },
   ];
 

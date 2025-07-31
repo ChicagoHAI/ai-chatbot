@@ -2,7 +2,8 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   experimental: {
-    ppr: true,
+    // Control PPR via environment variable
+    ppr: process.env.ENABLE_PPR === 'true',
   },
   images: {
     remotePatterns: [

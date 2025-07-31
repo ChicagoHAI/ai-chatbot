@@ -8,6 +8,9 @@ import {
   text,
   primaryKey,
   foreignKey,
+  integer,
+  index,
+  unique,
   boolean,
 } from 'drizzle-orm/pg-core';
 
@@ -101,6 +104,87 @@ export const vote = pgTable(
 );
 
 export type Vote = InferSelectModel<typeof vote>;
+
+export const hypothesisFeedback = pgTable(
+  'HypothesisFeedback',
+  {
+    id: uuid('id').primaryKey().notNull().defaultRandom(),
+    chatId: uuid('chatId')
+      .notNull()
+      .references(() => chat.id),
+    messageId: uuid('messageId')
+      .notNull()
+      .references(() => message.id),
+    userId: uuid('userId')
+      .notNull()
+      .references(() => user.id),
+    rating: varchar('rating', { enum: ['helpful', 'not_helpful', 'needs_improvement'] })
+      .notNull(),
+    feedbackText: text('feedbackText'),
+    feedbackType: varchar('feedbackType', { enum: ['quality', 'novelty', 'feasibility', 'clarity', 'other'] }),
+    hypothesisRatings: json('hypothesisRatings'),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+  },
+  (table) => ({
+    // One feedback per user per message
+    userMessageUnique: unique().on(table.userId, table.messageId),
+  }),
+);
+
+export type HypothesisFeedback = InferSelectModel<typeof hypothesisFeedback>;
+
+// Individual hypotheses extracted from messages
+export const hypothesis = pgTable(
+  'Hypothesis',
+  {
+    id: varchar('id', { length: 32 }).primaryKey().notNull(), // hyp_1, hyp_2, etc.
+    messageId: uuid('messageId')
+      .notNull()
+      .references(() => message.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    orderIndex: integer('orderIndex').notNull(),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+  },
+  (table) => ({
+    // Index for fast lookups by message
+    messageIdIdx: index('hypothesis_messageId_idx').on(table.messageId),
+  }),
+);
+
+export type Hypothesis = InferSelectModel<typeof hypothesis>;
+
+// Individual feedback for each hypothesis
+export const individualHypothesisFeedback = pgTable(
+  'IndividualHypothesisFeedback',
+  {
+    id: uuid('id').primaryKey().notNull().defaultRandom(),
+    hypothesisId: varchar('hypothesisId', { length: 32 })
+      .notNull()
+      .references(() => hypothesis.id, { onDelete: 'cascade' }),
+    userId: uuid('userId')
+      .notNull()
+      .references(() => user.id),
+    rating: varchar('rating', { enum: ['helpful', 'not_helpful', 'needs_improvement'] })
+      .notNull(),
+    feedbackText: text('feedbackText'),
+    feedbackCategory: varchar('feedbackCategory', { 
+      enum: ['quality', 'novelty', 'feasibility', 'clarity', 'other'] 
+    }),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+  },
+  (table) => ({
+    // One feedback per user per hypothesis
+    userHypothesisUnique: unique().on(table.userId, table.hypothesisId),
+    // Index for fast lookups
+    hypothesisIdIdx: index('individual_feedback_hypothesisId_idx').on(table.hypothesisId),
+    userIdIdx: index('individual_feedback_userId_idx').on(table.userId),
+  }),
+);
+
+export type IndividualHypothesisFeedback = InferSelectModel<typeof individualHypothesisFeedback>;
 
 export const document = pgTable(
   'Document',
