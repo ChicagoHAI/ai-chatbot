@@ -741,7 +741,7 @@ export async function saveHypotheses({
     console.error('[saveHypotheses] Hypotheses data:', hypothesisData);
     throw new ChatSDKError(
       'bad_request:database',
-      `Failed to save hypotheses: ${error.message}`,
+      `Failed to save hypotheses: ${error instanceof Error ? error.message : 'Unknown error'}`,
     );
   }
 }

@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   const session = await auth();
 
   if (!session?.user) {
-    return new ChatSDKError('unauthorized:hypothesis_feedback').toResponse();
+    return new ChatSDKError('unauthorized:api').toResponse();
   }
 
   try {
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
     }
   } catch (error) {
     return new ChatSDKError(
-      'internal_server_error:database',
+      'bad_request:database',
       'Failed to get hypothesis feedback',
     ).toResponse();
   }
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
   const session = await auth();
 
   if (!session?.user) {
-    return new ChatSDKError('unauthorized:hypothesis_feedback').toResponse();
+    return new ChatSDKError('unauthorized:api').toResponse();
   }
 
   // Verify user has access to this chat
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
   }
 
   if (chat.userId !== session.user.id) {
-    return new ChatSDKError('forbidden:hypothesis_feedback').toResponse();
+    return new ChatSDKError('forbidden:api').toResponse();
   }
 
   try {
@@ -101,7 +101,7 @@ export async function POST(request: Request) {
     return Response.json(feedback, { status: 200 });
   } catch (error) {
     return new ChatSDKError(
-      'internal_server_error:database',
+      'bad_request:database',
       'Failed to save hypothesis feedback',
     ).toResponse();
   }

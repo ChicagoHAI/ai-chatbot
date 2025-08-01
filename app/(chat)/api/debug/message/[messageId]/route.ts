@@ -1,6 +1,6 @@
 import { auth } from '@/app/(auth)/auth';
 import { getMessageById } from '@/lib/db/queries';
-import { unauthorized } from '@/lib/errors';
+import { ChatSDKError } from '@/lib/errors';
 
 // Helper function to extract hypotheses from text content (same as frontend)
 function extractHypothesesFromText(text: string): Array<{id: string, title: string, description: string}> {
@@ -43,7 +43,7 @@ export async function GET(
 ) {
   const session = await auth();
   if (!session || !session.user || !session.user.id) {
-    return unauthorized();
+    return new ChatSDKError('unauthorized:api').toResponse();
   }
 
   const { messageId } = params;
@@ -52,7 +52,7 @@ export async function GET(
     // This would need a getMessageById function - let me create a simple version
     // For now, let's use a direct database query
     const { drizzle } = await import('drizzle-orm/postgres-js');
-    const postgres = await import('postgres');
+    const postgres = (await import('postgres')).default;
     const { message } = await import('@/lib/db/schema');
     const { eq } = await import('drizzle-orm');
     

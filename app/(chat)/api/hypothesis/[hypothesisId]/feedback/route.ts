@@ -41,10 +41,7 @@ export async function GET(
   } catch (error) {
     console.error('Failed to get hypothesis feedback:', error);
     if (error instanceof ChatSDKError) {
-      const { code, message } = error;
-      if (code === 'not_found:feedback') {
-        return notFound();
-      }
+      return error.toResponse();
     }
     return new Response('Internal Server Error', { status: 500 });
   }
