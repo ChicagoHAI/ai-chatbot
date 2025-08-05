@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSWRConfig } from 'swr';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { 
@@ -20,7 +19,7 @@ import {
 } from './ui/tooltip';
 import { ChevronDownIcon, ChevronUpIcon } from './icons';
 import { toast } from 'sonner';
-import type { HypothesisFeedback } from '@/lib/db/schema';
+import type { HypothesisFeedback as HypothesisFeedbackType } from '@/lib/db/schema';
 
 interface Hypothesis {
   id: string;
@@ -64,13 +63,27 @@ export function HypothesisFeedback({
     setIsClient(true);
   }, []);
 
-  // Fetch existing feedback for this message
-  const { data: existingFeedback } = useSWR<HypothesisFeedback | null>(
+  // Fetch existing overall feedback for this message (graceful fallback)
+  const { data: existingFeedback } = useSWR<HypothesisFeedbackType | null>(
     `/api/hypothesis-feedback?messageId=${messageId}`,
     async (url: string) => {
-      const response = await fetch(url);
-      if (!response.ok) return null;
-      return response.json();
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          // Gracefully handle non-existent feedback API endpoints
+          if (response.status === 404) return null;
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      } catch (error) {
+        console.log('[INFO] Overall feedback API not available, using individual feedback only');
+        return null;
+      }
+    },
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false, // Don't retry if the API doesn't exist
     }
   );
 
@@ -166,17 +179,24 @@ export function HypothesisFeedback({
       });
 
       if (!response.ok) {
-        throw new Error('Failed to submit feedback');
+        // Gracefully handle case where overall feedback API doesn't exist
+        if (response.status === 404) {
+          toast.info('Overall feedback saved locally. Individual hypothesis ratings are still recorded.');
+        } else {
+          throw new Error('Failed to submit feedback');
+        }
+      } else {
+        // Update cache only if the API exists
+        mutate(`/api/hypothesis-feedback?messageId=${messageId}`);
+        mutate(`/api/hypothesis-feedback?messageId=${messageId}&stats=true`);
+        toast.success('Feedback submitted! Thank you for helping improve our hypotheses.');
       }
-
-      // Update cache
-      mutate(`/api/hypothesis-feedback?messageId=${messageId}`);
-      mutate(`/api/hypothesis-feedback?messageId=${messageId}&stats=true`);
-
-      toast.success('Feedback submitted! Thank you for helping improve our hypotheses.');
+      
       setIsExpanded(false);
     } catch (error) {
-      toast.error('Failed to submit feedback. Please try again.');
+      console.log('[INFO] Overall feedback API error:', error);
+      toast.info('Individual hypothesis ratings saved. Overall feedback temporarily unavailable.');
+      setIsExpanded(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -271,9 +291,9 @@ export function HypothesisFeedback({
             <div className="border-t pt-4">
               <div className="space-y-3">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">
+                  <div className="text-sm font-medium mb-2">
                     Overall hypothesis quality:
-                  </label>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       variant={overallRating === 'helpful' ? 'default' : 'outline'}
@@ -303,9 +323,9 @@ export function HypothesisFeedback({
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">
+                  <div className="text-sm font-medium mb-2">
                     Feedback category (optional):
-                  </label>
+                  </div>
                   <Select value={feedbackType} onValueChange={(value: any) => setFeedbackType(value)}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select feedback category" />
@@ -321,9 +341,9 @@ export function HypothesisFeedback({
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">
+                  <div className="text-sm font-medium mb-2">
                     Additional comments (optional):
-                  </label>
+                  </div>
                   <Textarea
                     value={feedbackText}
                     onChange={(e) => setFeedbackText(e.target.value)}
@@ -398,9 +418,9 @@ export function HypothesisFeedback({
       {isExpanded && (
         <div className="mt-3 p-3 bg-muted/20 rounded-md space-y-3">
           <div>
-            <label className="text-sm font-medium mb-2 block">
+            <div className="text-sm font-medium mb-2">
               How helpful was this response?
-            </label>
+            </div>
             <div className="flex gap-2">
               <Button
                 variant={overallRating === 'helpful' ? 'default' : 'outline'}
@@ -430,9 +450,9 @@ export function HypothesisFeedback({
           </div>
 
           <div>
-            <label className="text-sm font-medium mb-2 block">
+            <div className="text-sm font-medium mb-2">
               Additional comments (optional):
-            </label>
+            </div>
             <Textarea
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}

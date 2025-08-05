@@ -58,6 +58,7 @@ export const message = pgTable('Message_v2', {
   role: varchar('role').notNull(),
   parts: json('parts').notNull(),
   attachments: json('attachments').notNull(),
+  hypotheses: json('hypotheses'),
   createdAt: timestamp('createdAt').notNull(),
 });
 
@@ -138,7 +139,7 @@ export type HypothesisFeedback = InferSelectModel<typeof hypothesisFeedback>;
 export const hypothesis = pgTable(
   'Hypothesis',
   {
-    id: varchar('id', { length: 32 }).primaryKey().notNull(), // hyp_1, hyp_2, etc.
+    id: varchar('id', { length: 100 }).primaryKey().notNull(), // hyp_chatId_messageId_num
     messageId: uuid('messageId')
       .notNull()
       .references(() => message.id, { onDelete: 'cascade' }),
@@ -160,7 +161,7 @@ export const individualHypothesisFeedback = pgTable(
   'IndividualHypothesisFeedback',
   {
     id: uuid('id').primaryKey().notNull().defaultRandom(),
-    hypothesisId: varchar('hypothesisId', { length: 32 })
+    hypothesisId: varchar('hypothesisId', { length: 100 })
       .notNull()
       .references(() => hypothesis.id, { onDelete: 'cascade' }),
     userId: uuid('userId')

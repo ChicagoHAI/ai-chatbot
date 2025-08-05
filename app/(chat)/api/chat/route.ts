@@ -22,6 +22,7 @@ import { ChatSDKError } from '@/lib/errors';
 import type { ChatMessage } from '@/lib/types';
 import type { ChatModel } from '@/lib/ai/models';
 import type { VisibilityType } from '@/components/visibility-selector';
+import { getHypothesesFromMessage } from '@/lib/hypothesis-utils';
 import {
   createResumableStreamContext,
   type ResumableStreamContext,
@@ -277,15 +278,44 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
+        // Debug: Log all messages received in onFinish
+        console.log(`[onFinish] Received ${messages.length} messages total`);
+        messages.forEach((msg, idx) => {
+          console.log(`[onFinish] Message ${idx}: role=${msg.role}, id=${msg.id}`);
+        });
+        
+        // Only save the assistant messages - user message was already saved above
+        const assistantMessages = messages.filter(m => m.role === 'assistant');
+        
+        console.log(`[onFinish] Saving ${assistantMessages.length} assistant messages`);
+        
+        if (assistantMessages.length === 0) {
+          console.log('[onFinish] No assistant messages to save');
+          return;
+        }
+        
         await saveMessages({
-          messages: messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            parts: message.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
+          messages: assistantMessages.map((message) => {
+            let hypotheses = null;
+            
+            // Extract hypotheses from assistant messages
+            const extractedHypotheses = getHypothesesFromMessage(message, id);
+            if (extractedHypotheses.length > 0) {
+              hypotheses = extractedHypotheses;
+              console.log(`[onFinish] Extracted ${extractedHypotheses.length} hypotheses for message ${message.id}`);
+              console.log(`[onFinish] First hypothesis ID: ${extractedHypotheses[0]?.id}`);
+            }
+            
+            return {
+              id: message.id,
+              role: message.role,
+              parts: message.parts,
+              createdAt: new Date(),
+              attachments: [],
+              chatId: id,
+              hypotheses,
+            };
+          }),
         });
       },
       onError: () => {

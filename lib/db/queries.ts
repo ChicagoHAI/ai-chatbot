@@ -30,9 +30,6 @@ import {
   hypothesisFeedback,
   hypothesis,
   individualHypothesisFeedback,
-  type HypothesisFeedback,
-  type Hypothesis,
-  type IndividualHypothesisFeedback,
 } from './schema';
 import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
@@ -679,6 +676,48 @@ export async function getHypothesisFeedbackStats({
 
 // ===== Individual Hypothesis Functions =====
 
+export async function upsertHypothesis({
+  id,
+  messageId,
+  title,
+  description,
+  orderIndex,
+}: {
+  id: string;
+  messageId: string;
+  title: string;
+  description: string;
+  orderIndex: number;
+}) {
+  try {
+    const result = await db
+      .insert(hypothesis)
+      .values({
+        id,
+        messageId,
+        title,
+        description,
+        orderIndex,
+      })
+      .onConflictDoUpdate({
+        target: hypothesis.id,
+        set: {
+          title,
+          description,
+          orderIndex,
+        },
+      })
+      .returning();
+
+    return result[0];
+  } catch (error) {
+    throw new ChatSDKError(
+      'bad_request:database',
+      'Failed to upsert hypothesis',
+    );
+  }
+}
+
 export async function saveHypotheses({
   messageId,
   hypotheses: hypothesisData,
@@ -700,41 +739,47 @@ export async function saveHypotheses({
       .limit(1);
     
     if (messageExists.length === 0) {
-      console.error(`[saveHypotheses] Message ${messageId} not found in database`);
+      console.warn(`[saveHypotheses] Message ${messageId} not found in database - may still be processing`);
       throw new Error(`Message ${messageId} not found`);
     }
     
-    // Delete existing hypotheses for this message (if any) - safer approach
-    const existingHypotheses = await db
-      .select()
-      .from(hypothesis)
-      .where(eq(hypothesis.messageId, messageId));
-    
-    if (existingHypotheses.length > 0) {
-      console.log(`[saveHypotheses] Deleting ${existingHypotheses.length} existing hypotheses for message ${messageId}`);
-      await db.delete(hypothesis).where(eq(hypothesis.messageId, messageId));
+    if (hypothesisData.length === 0) {
+      return [];
     }
 
-    // Insert new hypotheses
-    if (hypothesisData.length > 0) {
-      const newHypotheses = await db
-        .insert(hypothesis)
-        .values(
-          hypothesisData.map((h) => ({
+    // Use upsert approach to handle race conditions
+    const newHypotheses = [];
+    
+    for (const h of hypothesisData) {
+      try {
+        const result = await db
+          .insert(hypothesis)
+          .values({
             id: h.id,
             messageId,
             title: h.title,
             description: h.description,
             orderIndex: h.orderIndex,
-          }))
-        )
-        .returning();
-
-      console.log(`[saveHypotheses] Successfully saved ${newHypotheses.length} hypotheses for message ${messageId}`);
-      return newHypotheses;
+          })
+          .onConflictDoUpdate({
+            target: hypothesis.id,
+            set: {
+              title: h.title,
+              description: h.description,
+              orderIndex: h.orderIndex,
+            },
+          })
+          .returning();
+        
+        newHypotheses.push(result[0]);
+      } catch (err) {
+        console.error(`[saveHypotheses] Failed to save hypothesis ${h.id}:`, err);
+        // Continue with other hypotheses instead of failing completely
+      }
     }
 
-    return [];
+    console.log(`[saveHypotheses] Successfully saved ${newHypotheses.length} hypotheses for message ${messageId}`);
+    return newHypotheses;
   } catch (error) {
     console.error('[saveHypotheses] Database error:', error);
     console.error('[saveHypotheses] MessageId:', messageId);

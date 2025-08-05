@@ -1,5 +1,4 @@
 import { auth } from '@/app/(auth)/auth';
-import { getMessageById } from '@/lib/db/queries';
 import { ChatSDKError } from '@/lib/errors';
 
 // Helper function to extract hypotheses from text content (same as frontend)
@@ -14,22 +13,24 @@ function extractHypothesesFromText(text: string): Array<{id: string, title: stri
   }
   
   const hypothesesText = hypothesesMatch[1];
-  console.log('[DEBUG API] Extracted hypotheses text:', hypothesesText.substring(0, 300) + '...');
+  console.log('[DEBUG API] Extracted hypotheses text:', `${hypothesesText.substring(0, 300)}...`);
   
   const hypotheses: Array<{id: string, title: string, description: string}> = [];
   
   // Parse each hypothesis using regex - match the actual format from backend
   const hypothesisPattern = /\*\*Hypothesis (\d+):\s*([^*]+?)\*\*\s*\n([^*]+?)(?=\n\*\*Hypothesis|$)/gs;
-  let match;
+  let match: RegExpExecArray | null = hypothesisPattern.exec(hypothesesText);
   
-  while ((match = hypothesisPattern.exec(hypothesesText)) !== null) {
+  while (match !== null) {
     const [, num, title, description] = match;
-    console.log(`[DEBUG API] Found hypothesis ${num}:`, { title: title.trim(), description: description.trim().substring(0, 50) + '...' });
+    console.log(`[DEBUG API] Found hypothesis ${num}:`, { title: title.trim(), description: `${description.trim().substring(0, 50)}...` });
     hypotheses.push({
       id: `hyp_${num}`,
       title: title.trim(),
       description: description.trim()
     });
+    
+    match = hypothesisPattern.exec(hypothesesText);
   }
   
   console.log('[DEBUG API] Total hypotheses extracted:', hypotheses.length);
@@ -74,13 +75,13 @@ export async function GET(
     const parts = messageData.parts as any[];
     
     let allText = '';
-    let textParts = [];
+    const textParts = [];
     
     for (const part of parts) {
       if (part.type === 'text' && part.text) {
         allText += part.text;
         textParts.push({
-          text: part.text.substring(0, 200) + '...',
+          text: `${part.text.substring(0, 200)}...`,
           hasMarkers: part.text.includes('<!-- HYPOTHESES_START -->')
         });
       }
@@ -98,7 +99,7 @@ export async function GET(
       debugInfo: {
         hasStartMarker: allText.includes('<!-- HYPOTHESES_START -->'),
         hasEndMarker: allText.includes('<!-- HYPOTHESES_END -->'),
-        markerSection: allText.match(/<!-- HYPOTHESES_START -->([\s\S]*?)<!-- HYPOTHESES_END -->/)?.[1]?.substring(0, 200) + '...'
+        markerSection: `${allText.match(/<!-- HYPOTHESES_START -->([\s\S]*?)<!-- HYPOTHESES_END -->/)?.[1]?.substring(0, 200)}...`
       }
     });
   } catch (error) {

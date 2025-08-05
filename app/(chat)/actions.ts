@@ -1,6 +1,6 @@
 'use server';
 
-import { type UIMessage } from 'ai';
+import type { UIMessage } from 'ai';
 import { cookies } from 'next/headers';
 import {
   deleteMessagesByChatIdAfterTimestamp,
@@ -26,7 +26,7 @@ export async function generateTitleFromUserMessage({
     .join(' ') || 'New Chat';
   
   // Take first 50 characters and clean up
-  const title = text.length > 50 ? text.slice(0, 47) + '...' : text;
+  const title = text.length > 50 ? `${text.slice(0, 47)}...` : text;
   return title.trim() || 'New Chat';
 }
 

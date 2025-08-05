@@ -88,9 +88,33 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Check if the message exists in the database
+    const { getMessageById, getMessagesByChatId } = await import('@/lib/db/queries');
+    let actualMessageId = messageId;
+    
+    const messages = await getMessageById({ id: messageId });
+    if (!messages || messages.length === 0) {
+      console.log(`[Overall Feedback API] Message ${messageId} not found, trying to find assistant message in chat ${chatId}`);
+      
+      // Get all messages in the chat
+      const chatMessages = await getMessagesByChatId({ id: chatId });
+      
+      // Find the most recent assistant message (likely the one with hypotheses)
+      const assistantMessages = chatMessages.filter(m => m.role === 'assistant');
+      
+      if (assistantMessages.length > 0) {
+        // Use the most recent assistant message
+        const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+        actualMessageId = lastAssistantMessage.id;
+        console.log(`[Overall Feedback API] Using assistant message ${actualMessageId} from chat`);
+      } else {
+        return new ChatSDKError('not_found:api', 'No assistant messages found in chat').toResponse();
+      }
+    }
+    
     const feedback = await saveHypothesisFeedback({
       chatId,
-      messageId,
+      messageId: actualMessageId,  // Use the actual message ID from database
       userId: session.user.id,
       rating,
       feedbackText,
