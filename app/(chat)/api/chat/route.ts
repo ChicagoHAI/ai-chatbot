@@ -122,6 +122,7 @@ export async function POST(request: Request) {
           parts: message.parts,
           attachments: [],
           createdAt: new Date(),
+          hypotheses: null,
         },
       ],
     });
