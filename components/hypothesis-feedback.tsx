@@ -55,6 +55,7 @@ export function HypothesisFeedback({
   const [hypothesisRatings, setHypothesisRatings] = useState<Record<string, 'helpful' | 'not_helpful' | 'needs_improvement'>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  const [hasSubmittedFeedback, setHasSubmittedFeedback] = useState(false);
 
   const { mutate } = useSWRConfig();
 
@@ -190,6 +191,7 @@ export function HypothesisFeedback({
         mutate(`/api/hypothesis-feedback?messageId=${messageId}`);
         mutate(`/api/hypothesis-feedback?messageId=${messageId}&stats=true`);
         toast.success('Feedback submitted! Thank you for helping improve our hypotheses.');
+        setHasSubmittedFeedback(true);  // Mark as submitted
       }
       
       setIsExpanded(false);
@@ -209,7 +211,7 @@ export function HypothesisFeedback({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <span>🔬 Hypothesis Feedback ({hypotheses.length})</span>
-            {existingFeedback && (
+            {(existingFeedback || hasSubmittedFeedback) && (
               <span className="text-xs text-green-600">✓ Overall feedback given</span>
             )}
           </div>
