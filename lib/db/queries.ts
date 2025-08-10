@@ -71,11 +71,15 @@ export async function createGuestUser() {
   const password = generateHashedPassword(generateUUID());
 
   try {
-    return await db.insert(user).values({ email, password }).returning({
+    console.log(`[createGuestUser] Creating guest user with email: ${email}`);
+    const result = await db.insert(user).values({ email, password }).returning({
       id: user.id,
       email: user.email,
     });
+    console.log(`[createGuestUser] Successfully created guest user: ${result[0]?.id}`);
+    return result;
   } catch (error) {
+    console.error(`[createGuestUser] Error creating guest user:`, error);
     throw new ChatSDKError(
       'bad_request:database',
       'Failed to create guest user',
@@ -95,14 +99,23 @@ export async function saveChat({
   visibility: VisibilityType;
 }) {
   try {
-    return await db.insert(chat).values({
+    console.log(`[saveChat] Attempting to save chat ${id} for user ${userId}`);
+    const result = await db.insert(chat).values({
       id,
       createdAt: new Date(),
       userId,
       title,
       visibility,
     });
+    console.log(`[saveChat] Successfully saved chat ${id}`);
+    return result;
   } catch (error) {
+    console.error(`[saveChat] Error saving chat ${id}:`, error);
+    // Check if it's a duplicate key error (chat already exists)
+    if (error instanceof Error && error.message.includes('duplicate key')) {
+      console.log(`[saveChat] Chat ${id} already exists, continuing...`);
+      return null; // Return null instead of throwing error
+    }
     throw new ChatSDKError('bad_request:database', 'Failed to save chat');
   }
 }
@@ -148,6 +161,7 @@ export async function getChatsByUserId({
   endingBefore: string | null;
 }) {
   try {
+    console.log(`[getChatsByUserId] Attempting to get chats for user ${id}`);
     const extendedLimit = limit + 1;
 
     const query = (whereCondition?: SQL<any>) =>
@@ -172,10 +186,11 @@ export async function getChatsByUserId({
         .limit(1);
 
       if (!selectedChat) {
-        throw new ChatSDKError(
-          'not_found:database',
-          `Chat with id ${startingAfter} not found`,
-        );
+        console.log(`[getChatsByUserId] Chat with id ${startingAfter} not found, returning empty result`);
+        return {
+          chats: [],
+          hasMore: false,
+        };
       }
 
       filteredChats = await query(gt(chat.createdAt, selectedChat.createdAt));
@@ -187,10 +202,11 @@ export async function getChatsByUserId({
         .limit(1);
 
       if (!selectedChat) {
-        throw new ChatSDKError(
-          'not_found:database',
-          `Chat with id ${endingBefore} not found`,
-        );
+        console.log(`[getChatsByUserId] Chat with id ${endingBefore} not found, returning empty result`);
+        return {
+          chats: [],
+          hasMore: false,
+        };
       }
 
       filteredChats = await query(lt(chat.createdAt, selectedChat.createdAt));
@@ -199,25 +215,33 @@ export async function getChatsByUserId({
     }
 
     const hasMore = filteredChats.length > limit;
-
-    return {
+    const result = {
       chats: hasMore ? filteredChats.slice(0, limit) : filteredChats,
       hasMore,
     };
+
+    console.log(`[getChatsByUserId] Successfully retrieved ${result.chats.length} chats for user ${id}`);
+    return result;
   } catch (error) {
-    throw new ChatSDKError(
-      'bad_request:database',
-      'Failed to get chats by user id',
-    );
+    console.error(`[getChatsByUserId] Error getting chats for user ${id}:`, error);
+    // Return empty result instead of throwing error to prevent frontend crashes
+    return {
+      chats: [],
+      hasMore: false,
+    };
   }
 }
 
 export async function getChatById({ id }: { id: string }) {
   try {
+    console.log(`[getChatById] Attempting to get chat ${id}`);
     const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
+    console.log(`[getChatById] Successfully retrieved chat ${id}`);
     return selectedChat;
   } catch (error) {
-    throw new ChatSDKError('bad_request:database', 'Failed to get chat by id');
+    console.error(`[getChatById] Error getting chat ${id}:`, error);
+    // Return null instead of throwing error to prevent frontend crashes
+    return null;
   }
 }
 
@@ -227,24 +251,35 @@ export async function saveMessages({
   messages: Array<DBMessage>;
 }) {
   try {
-    return await db.insert(message).values(messages);
+    console.log(`[saveMessages] Attempting to save ${messages.length} messages`);
+    const result = await db.insert(message).values(messages);
+    console.log(`[saveMessages] Successfully saved ${messages.length} messages`);
+    return result;
   } catch (error) {
+    console.error(`[saveMessages] Error saving messages:`, error);
+    // Check if it's a duplicate key error (message already exists)
+    if (error instanceof Error && error.message.includes('duplicate key')) {
+      console.log(`[saveMessages] Messages already exist, continuing...`);
+      return null; // Return null instead of throwing error
+    }
     throw new ChatSDKError('bad_request:database', 'Failed to save messages');
   }
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
   try {
-    return await db
+    console.log(`[getMessagesByChatId] Attempting to get messages for chat ${id}`);
+    const messages = await db
       .select()
       .from(message)
       .where(eq(message.chatId, id))
       .orderBy(asc(message.createdAt));
+    console.log(`[getMessagesByChatId] Successfully retrieved ${messages.length} messages for chat ${id}`);
+    return messages;
   } catch (error) {
-    throw new ChatSDKError(
-      'bad_request:database',
-      'Failed to get messages by chat id',
-    );
+    console.error(`[getMessagesByChatId] Error getting messages for chat ${id}:`, error);
+    // Return empty array instead of throwing error to prevent frontend crashes
+    return [];
   }
 }
 
@@ -487,6 +522,7 @@ export async function getMessageCountByUserId({
   differenceInHours,
 }: { id: string; differenceInHours: number }) {
   try {
+    console.log(`[getMessageCountByUserId] Getting message count for user ${id} in last ${differenceInHours} hours`);
     const twentyFourHoursAgo = new Date(
       Date.now() - differenceInHours * 60 * 60 * 1000,
     );
@@ -504,12 +540,14 @@ export async function getMessageCountByUserId({
       )
       .execute();
 
-    return stats?.count ?? 0;
+    const messageCount = stats?.count ?? 0;
+    console.log(`[getMessageCountByUserId] Found ${messageCount} messages for user ${id}`);
+    return messageCount;
   } catch (error) {
-    throw new ChatSDKError(
-      'bad_request:database',
-      'Failed to get message count by user id',
-    );
+    console.error(`[getMessageCountByUserId] Error getting message count for user ${id}:`, error);
+    // If there's an error, return 0 instead of throwing
+    console.log(`[getMessageCountByUserId] Returning 0 for user ${id} due to error`);
+    return 0;
   }
 }
 

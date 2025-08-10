@@ -22,6 +22,7 @@ import { useAutoResume } from '@/hooks/use-auto-resume';
 import { ChatSDKError } from '@/lib/errors';
 import type { Attachment, ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
+import { SemanticScholarToggle } from './semantic-scholar-toggle';
 
 export function Chat({
   id,
@@ -49,16 +50,12 @@ export function Chat({
   const { setDataStream } = useDataStream();
 
   const [input, setInput] = useState<string>('');
+  const [isSemanticScholarMode, setIsSemanticScholarMode] = useState(false);
 
-  const {
-    messages,
-    setMessages,
-    sendMessage,
-    status,
-    stop,
-    regenerate,
-    resumeStream,
-  } = useChat<ChatMessage>({
+  console.log('[Chat] isSemanticScholarMode:', isSemanticScholarMode);
+
+  // Create separate chat instances for each mode
+  const regularChat = useChat<ChatMessage>({
     id,
     messages: initialMessages,
     experimental_throttle: 100,
@@ -93,6 +90,53 @@ export function Chat({
       }
     },
   });
+
+  const semanticScholarChat = useChat<ChatMessage>({
+    id, // Use the same ID as regular chat
+    messages: initialMessages,
+    experimental_throttle: 100,
+    generateId: generateUUID,
+    transport: new DefaultChatTransport({
+      api: '/api/semantic-scholar',
+      fetch: fetchWithErrorHandlers,
+      prepareSendMessagesRequest({ messages, id, body }) {
+        return {
+          body: {
+            id,
+            message: messages.at(-1),
+            selectedChatModel: initialChatModel,
+            selectedVisibilityType: visibilityType,
+            ...body,
+          },
+        };
+      },
+    }),
+    onData: (dataPart) => {
+      setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+    },
+    onFinish: () => {
+      mutate(unstable_serialize(getChatHistoryPaginationKey));
+    },
+    onError: (error) => {
+      if (error instanceof ChatSDKError) {
+        toast({
+          type: 'error',
+          description: error.message,
+        });
+      }
+    },
+  });
+
+  // Use the appropriate chat instance based on mode
+  const {
+    messages,
+    setMessages,
+    sendMessage,
+    status,
+    stop,
+    regenerate,
+    resumeStream,
+  } = isSemanticScholarMode ? semanticScholarChat : regularChat;
 
   const searchParams = useSearchParams();
   const query = searchParams.get('query');
@@ -137,51 +181,53 @@ export function Chat({
           session={session}
         />
 
-        <Messages
-          chatId={id}
-          status={status}
-          votes={votes}
-          messages={messages}
-          setMessages={setMessages}
-          regenerate={regenerate}
-          isReadonly={isReadonly}
-          isArtifactVisible={isArtifactVisible}
-        />
+        <div className="flex-1 overflow-hidden">
+          <div className="h-full flex flex-col">
+            <div className="flex-1 overflow-auto">
+              <Messages
+                chatId={id}
+                status={status}
+                votes={votes}
+                messages={messages}
+                setMessages={setMessages}
+                regenerate={regenerate}
+                isReadonly={isReadonly}
+                isArtifactVisible={isArtifactVisible}
+              />
+            </div>
 
-        <form className="flex mx-auto px-4 bg-background pb-4 md:pb-6 gap-2 w-full md:max-w-3xl">
-          {!isReadonly && (
-            <MultimodalInput
-              chatId={id}
-              input={input}
-              setInput={setInput}
-              status={status}
-              stop={stop}
-              attachments={attachments}
-              setAttachments={setAttachments}
-              messages={messages}
-              setMessages={setMessages}
-              sendMessage={sendMessage}
-              selectedVisibilityType={visibilityType}
-            />
-          )}
-        </form>
+            <div className="border-t bg-background p-4">
+              <SemanticScholarToggle
+                isSemanticScholarMode={isSemanticScholarMode}
+                onToggle={setIsSemanticScholarMode}
+              />
+              
+              <MultimodalInput
+                chatId={id}
+                status={status}
+                input={input}
+                setInput={setInput}
+                sendMessage={sendMessage}
+                stop={stop}
+                attachments={attachments}
+                setAttachments={setAttachments}
+                messages={messages}
+                setMessages={setMessages}
+                isReadonly={isReadonly}
+                selectedVisibilityType={visibilityType}
+                isSemanticScholarMode={isSemanticScholarMode}
+              />
+              {console.log('[Chat] Passing isSemanticScholarMode to MultimodalInput:', isSemanticScholarMode)}
+            </div>
+          </div>
+        </div>
       </div>
 
       <Artifact
         chatId={id}
-        input={input}
-        setInput={setInput}
-        status={status}
-        stop={stop}
+        isVisible={isArtifactVisible}
         attachments={attachments}
         setAttachments={setAttachments}
-        sendMessage={sendMessage}
-        messages={messages}
-        setMessages={setMessages}
-        regenerate={regenerate}
-        votes={votes}
-        isReadonly={isReadonly}
-        selectedVisibilityType={visibilityType}
       />
     </>
   );

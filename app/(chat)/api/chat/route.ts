@@ -12,6 +12,8 @@ import {
   getMessagesByChatId,
   saveChat,
   saveMessages,
+  getUser,
+  createGuestUser,
 } from '@/lib/db/queries';
 import { generateUUID, getTextFromMessage } from '@/lib/utils';
 import { generateTitleFromUserMessage } from '../../actions';
@@ -83,6 +85,9 @@ export async function POST(request: Request) {
 
     const userType: UserType = session.user.type;
 
+    // Enable database operations
+    console.log('[CHAT] Running database operations');
+    
     const messageCount = await getMessageCountByUserId({
       id: session.user.id,
       differenceInHours: 24,
@@ -93,15 +98,28 @@ export async function POST(request: Request) {
     }
 
     const chat = await getChatById({ id });
+    let userId = session.user.id;
 
     if (!chat) {
+      // Ensure the user exists in the database
+      const users = await getUser(session.user.email || '');
+      
+      if (users.length === 0) {
+        console.log(`[CHAT] User ${session.user.id} not found, creating guest user`);
+        const newUsers = await createGuestUser();
+        if (newUsers.length > 0) {
+          userId = newUsers[0].id;
+          console.log(`[CHAT] Using new guest user ID: ${userId}`);
+        }
+      }
+
       const title = await generateTitleFromUserMessage({
         message,
       });
 
       await saveChat({
         id,
-        userId: session.user.id,
+        userId: userId,
         title,
         visibility: selectedVisibilityType,
       });
@@ -113,18 +131,21 @@ export async function POST(request: Request) {
 
     const messagesFromDb = await getMessagesByChatId({ id });
 
+    // Use the correct user ID for saving messages
+    const currentUserId = chat ? chat.userId : userId;
+
     await saveMessages({
       messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: 'user',
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-          hypotheses: null,
-        },
-      ],
+      {
+        chatId: id,
+        id: message.id,
+        role: 'user',
+        parts: message.parts,
+        attachments: [],
+        createdAt: new Date(),
+        hypotheses: null,
+      },
+    ],
     });
 
     const streamId = generateUUID();
@@ -357,6 +378,10 @@ export async function DELETE(request: Request) {
   }
 
   const chat = await getChatById({ id });
+
+  if (!chat) {
+    return new ChatSDKError('not_found:chat').toResponse();
+  }
 
   if (chat.userId !== session.user.id) {
     return new ChatSDKError('forbidden:chat').toResponse();

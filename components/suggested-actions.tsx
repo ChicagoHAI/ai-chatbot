@@ -11,14 +11,18 @@ interface SuggestedActionsProps {
   chatId: string;
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
   selectedVisibilityType: VisibilityType;
+  isSemanticScholarMode?: boolean;
 }
 
 function PureSuggestedActions({
   chatId,
   sendMessage,
   selectedVisibilityType,
+  isSemanticScholarMode = false,
 }: SuggestedActionsProps) {
-  const suggestedActions = [
+  console.log('[SuggestedActions] isSemanticScholarMode:', isSemanticScholarMode);
+  
+  const regularChatActions = [
     {
       title: 'Generate hypotheses about',
       label: 'machine learning interpretability',
@@ -41,6 +45,32 @@ function PureSuggestedActions({
     },
   ];
 
+  const semanticScholarActions = [
+    {
+      title: 'Search for papers about',
+      label: 'artificial intelligence ethics',
+      action: 'artificial intelligence ethics',
+    },
+    {
+      title: 'Find research on',
+      label: 'machine learning bias',
+      action: 'machine learning bias',
+    },
+    {
+      title: 'Look up papers about',
+      label: 'deep learning interpretability',
+      action: 'deep learning interpretability',
+    },
+    {
+      title: 'Search for studies on',
+      label: 'neural network robustness',
+      action: 'neural network robustness',
+    },
+  ];
+
+  const suggestedActions = isSemanticScholarMode ? semanticScholarActions : regularChatActions;
+  console.log('[SuggestedActions] Using actions:', suggestedActions.map(a => a.action));
+
   return (
     <div
       data-testid="suggested-actions"
@@ -58,6 +88,7 @@ function PureSuggestedActions({
           <Button
             variant="ghost"
             onClick={async () => {
+              console.log('[SuggestedActions] Button clicked:', suggestedAction.action);
               window.history.replaceState({}, '', `/chat/${chatId}`);
 
               sendMessage({
@@ -83,6 +114,8 @@ export const SuggestedActions = memo(
   (prevProps, nextProps) => {
     if (prevProps.chatId !== nextProps.chatId) return false;
     if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType)
+      return false;
+    if (prevProps.isSemanticScholarMode !== nextProps.isSemanticScholarMode)
       return false;
 
     return true;

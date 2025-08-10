@@ -42,6 +42,7 @@ function PureMultimodalInput({
   sendMessage,
   className,
   selectedVisibilityType,
+  isSemanticScholarMode = false,
 }: {
   chatId: string;
   input: string;
@@ -55,7 +56,10 @@ function PureMultimodalInput({
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
   className?: string;
   selectedVisibilityType: VisibilityType;
+  isSemanticScholarMode?: boolean;
 }) {
+  console.log('[MultimodalInput] isSemanticScholarMode:', isSemanticScholarMode);
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
 
@@ -241,6 +245,7 @@ function PureMultimodalInput({
             sendMessage={sendMessage}
             chatId={chatId}
             selectedVisibilityType={selectedVisibilityType}
+            isSemanticScholarMode={isSemanticScholarMode}
           />
         )}
 
@@ -331,6 +336,8 @@ export const MultimodalInput = memo(
     if (prevProps.status !== nextProps.status) return false;
     if (!equal(prevProps.attachments, nextProps.attachments)) return false;
     if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType)
+      return false;
+    if (prevProps.isSemanticScholarMode !== nextProps.isSemanticScholarMode)
       return false;
 
     return true;
