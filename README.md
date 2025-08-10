@@ -60,3 +60,52 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## Semantic Scholar Integration
+
+This project includes a frontend-only integration with the Semantic Scholar API for literature retrieval and research paper discovery.
+
+### Features
+
+- **Dual Chat Modes**: Toggle between regular chat and Semantic Scholar mode
+- **Keyword-Based Paper Retrieval**: Search for academic papers using natural language queries
+- **Suggested Actions**: Pre-configured research topics for quick access
+- **Real-time Paper Display**: View formatted results with titles, authors, and abstracts
+- **No Backend Dependency**: Direct API integration without requiring additional services
+
+### Setup
+
+1. **Get a Semantic Scholar API Key**:
+   - Visit [Semantic Scholar API](https://www.semanticscholar.org/product/api)
+   - Sign up and obtain your API key
+
+2. **Add to Environment Variables**:
+   ```bash
+   # Add to your .env.local file
+   SEMANTIC_SCHOLAR_API_KEY="your-api-key-here"
+   ```
+
+3. **Usage**:
+   - Switch to "Semantic Scholar" mode using the toggle button
+   - Use suggested action buttons for common research topics
+   - Or type your own research query (e.g., "machine learning bias")
+   - View retrieved papers with formatted results
+
+### Implementation Details
+
+- **API Endpoint**: `/api/semantic-scholar` - Handles direct Semantic Scholar API calls
+- **Components**: 
+  - `SemanticScholarToggle` - Mode switching
+  - `SuggestedActions` - Research topic buttons
+  - Enhanced `Chat` component with dual mode support
+- **Features**: Streaming responses, error handling, and formatted paper display
+
+### Example Queries
+
+- "artificial intelligence ethics"
+- "machine learning interpretability" 
+- "deep learning robustness"
+- "neural network bias"
+- "AI safety research"
+
+The integration is completely self-contained and requires no additional backend services beyond the Semantic Scholar API.
