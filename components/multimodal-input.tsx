@@ -43,6 +43,7 @@ function PureMultimodalInput({
   className,
   selectedVisibilityType,
   isSemanticScholarMode = false,
+  isRegularPlusSemanticMode = false,
 }: {
   chatId: string;
   input: string;
@@ -57,8 +58,12 @@ function PureMultimodalInput({
   className?: string;
   selectedVisibilityType: VisibilityType;
   isSemanticScholarMode?: boolean;
+  isRegularPlusSemanticMode?: boolean;
 }) {
-  console.log('[MultimodalInput] isSemanticScholarMode:', isSemanticScholarMode);
+  console.log('[MultimodalInput] Mode:', 
+    isRegularPlusSemanticMode ? 'Regular + Semantic' : 
+    isSemanticScholarMode ? 'Semantic Scholar' : 'Vector Database'
+  );
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -246,6 +251,7 @@ function PureMultimodalInput({
             chatId={chatId}
             selectedVisibilityType={selectedVisibilityType}
             isSemanticScholarMode={isSemanticScholarMode}
+            isRegularPlusSemanticMode={isRegularPlusSemanticMode}
           />
         )}
 
@@ -339,7 +345,8 @@ export const MultimodalInput = memo(
       return false;
     if (prevProps.isSemanticScholarMode !== nextProps.isSemanticScholarMode)
       return false;
-
+    if (prevProps.isRegularPlusSemanticMode !== nextProps.isRegularPlusSemanticMode)
+      return false;
     return true;
   },
 );

@@ -17,10 +17,12 @@ import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
 import { HypothesisFeedback } from './hypothesis-feedback';
+
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 import { getHypothesesFromMessage } from '@/lib/hypothesis-utils';
+import { useSession } from 'next-auth/react';
 
 // Type narrowing is handled by TypeScript's control flow analysis
 // The AI SDK provides proper discriminated unions for tool calls
@@ -52,6 +54,47 @@ const PurePreviewMessage = ({
   );
 
   const { dataStream } = useDataStream();
+  const { data: session } = useSession();
+  
+  // State to track if hypothesis generation has been triggered
+
+  
+  // Extract query and papers from Semantic Scholar message
+  const extractSemanticScholarData = (text: string) => {
+    const queryMatch = text.match(/Found \d+ papers for query: (.+?)\n/);
+    const query = queryMatch ? queryMatch[1] : '';
+    
+    console.log('[DEBUG] Extracting from text:', text.substring(0, 200) + '...');
+    
+    // Extract papers from the message content
+    const papers: any[] = [];
+    
+    // Look for paper patterns in the text - updated to match actual format
+    const paperMatches = text.matchAll(/### Paper (\d+): (.+?)\n\*\*Authors:\*\* (.+?)\n\*\*Year:\*\* (.+?)\n\*\*Venue:\*\* (.+?)\n\*\*Citations:\*\* (\d+)\n\*\*Abstract:\*\* (.+?)(?=\n\n### Paper|\n\n---|\n\n\*\*Want to generate|\n\n$)/gs);
+    
+    console.log('[DEBUG] Paper matches found:', Array.from(paperMatches).length);
+    
+    // Reset the iterator since we used it above
+    const paperMatches2 = text.matchAll(/### Paper (\d+): (.+?)\n\*\*Authors:\*\* (.+?)\n\*\*Year:\*\* (.+?)\n\*\*Venue:\*\* (.+?)\n\*\*Citations:\*\* (\d+)\n\*\*Abstract:\*\* (.+?)(?=\n\n### Paper|\n\n---|\n\n\*\*Want to generate|\n\n$)/gs);
+    
+    for (const match of paperMatches2) {
+      const [, number, title, authors, year, venue, citations, abstract] = match;
+      papers.push({
+        title: title.trim(),
+        authors: authors.split(',').map(a => ({ name: a.trim() })),
+        year: parseInt(year) || 'Unknown',
+        venue: venue.trim(),
+        citationCount: parseInt(citations) || 0,
+        abstract: abstract.trim(),
+        paperId: `paper-${number}`,
+      });
+    }
+    
+    console.log('[DEBUG] Extracted papers:', papers.length, papers);
+    return { query, papers };
+  };
+
+
   
   // Streaming debug info - remove after testing
   useEffect(() => {
@@ -170,6 +213,24 @@ const PurePreviewMessage = ({
                         })}
                       >
                         <Markdown>{sanitizeText(part.text)}</Markdown>
+                        
+                        {/* Show Generate Hypotheses button for Semantic Scholar messages */}
+                        {message.role === 'assistant' && 
+                         (part.text.includes('Want to generate hypotheses from these papers?') || 
+                          part.text.includes('## Retrieved Papers')) && (
+                          <div className="mt-4">
+                            {(() => {
+                              console.log('[DEBUG] RENDERING BUTTON - Message text for button:', part.text.substring(0, 500) + '...');
+                              const { query, papers } = extractSemanticScholarData(part.text);
+                              console.log('[DEBUG] RENDERING BUTTON - Button papers extraction:', { query, papersCount: papers.length, papers });
+                              console.log('[DEBUG] RENDERING BUTTON - About to render GenerateHypothesesButton');
+                              console.log('[DEBUG] RENDERING BUTTON - GenerateHypothesesButton rendered');
+                              
+                              // Auto-generation removed - hypotheses are now generated directly in the POST response
+                              return null;
+                            })()}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -367,24 +428,40 @@ const PurePreviewMessage = ({
             {!isReadonly && !isLoading && message.role === 'assistant' && (() => {
               console.log('[DEBUG] Checking for hypotheses, isLoading:', isLoading, 'messageId:', message.id);
               
-              // IMPORTANT: Extract hypotheses with the UI message ID, not the database ID
-              // This ensures the hypothesis IDs match what the user sees
-              const hypotheses = getHypothesesFromMessage(message, chatId);
+              // Check if this message contains Semantic Scholar paper data
+              const textContent = message.parts.find(part => part.type === 'text')?.text || '';
+              const isSemanticScholarResponse = textContent.includes('## Retrieved Papers') || 
+                (textContent.includes('Found') && textContent.includes('papers for query')) ||
+                textContent.includes('Want to generate hypotheses from these papers') ||
+                textContent.includes('## Generated Hypotheses');
               
-              if (hypotheses.length > 0) {
-                console.log('[DEBUG] Rendering HypothesisFeedback with text-parsed hypotheses:', hypotheses.length, 'messageId:', message.id);
-                console.log('[DEBUG] First hypothesis ID:', hypotheses[0]?.id);
-                console.log('[DEBUG] Message ID in UI:', message.id);
+              console.log('[DEBUG] Message text preview:', textContent.substring(0, 100) + '...');
+              console.log('[DEBUG] Is Semantic Scholar response:', isSemanticScholarResponse);
+              
+              // Only extract hypotheses if this is NOT a Semantic Scholar response
+              // (Semantic Scholar responses should use the "Generate Hypotheses" button instead)
+              if (!isSemanticScholarResponse) {
+                // IMPORTANT: Extract hypotheses with the UI message ID, not the database ID
+                // This ensures the hypothesis IDs match what the user sees
+                const hypotheses = getHypothesesFromMessage(message, chatId);
                 
-                return (
-                  <HypothesisFeedback
-                    key={`feedback-${message.id}`}
-                    chatId={chatId}
-                    messageId={message.id}
-                    isHypothesisResponse={true}
-                    hypotheses={hypotheses}
-                  />
-                );
+                if (hypotheses.length > 0) {
+                  console.log('[DEBUG] Rendering HypothesisFeedback with text-parsed hypotheses:', hypotheses.length, 'messageId:', message.id);
+                  console.log('[DEBUG] First hypothesis ID:', hypotheses[0]?.id);
+                  console.log('[DEBUG] Message ID in UI:', message.id);
+                  
+                  return (
+                    <HypothesisFeedback
+                      key={`feedback-${message.id}`}
+                      chatId={chatId}
+                      messageId={message.id}
+                      isHypothesisResponse={true}
+                      hypotheses={hypotheses}
+                    />
+                  );
+                }
+              } else {
+                console.log('[DEBUG] Skipping hypothesis extraction for Semantic Scholar response');
               }
               return null;
             })()}

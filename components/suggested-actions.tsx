@@ -12,6 +12,7 @@ interface SuggestedActionsProps {
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
   selectedVisibilityType: VisibilityType;
   isSemanticScholarMode?: boolean;
+  isRegularPlusSemanticMode?: boolean;
 }
 
 function PureSuggestedActions({
@@ -19,10 +20,14 @@ function PureSuggestedActions({
   sendMessage,
   selectedVisibilityType,
   isSemanticScholarMode = false,
+  isRegularPlusSemanticMode = false,
 }: SuggestedActionsProps) {
-  console.log('[SuggestedActions] isSemanticScholarMode:', isSemanticScholarMode);
+  console.log('[SuggestedActions] Mode:', 
+    isRegularPlusSemanticMode ? 'Regular + Semantic' : 
+    isSemanticScholarMode ? 'Semantic Scholar' : 'Regular Chat'
+  );
   
-  const regularChatActions = [
+  const vectorDatabaseActions = [
     {
       title: 'Generate hypotheses about',
       label: 'machine learning interpretability',
@@ -68,8 +73,44 @@ function PureSuggestedActions({
     },
   ];
 
-  const suggestedActions = isSemanticScholarMode ? semanticScholarActions : regularChatActions;
-  console.log('[SuggestedActions] Using actions:', suggestedActions.map(a => a.action));
+  const regularPlusSemanticActions = [
+    {
+      title: 'Generate hypothesis about',
+      label: 'AI ethics',
+      action: 'Generate hypothesis about AI ethics',
+    },
+    {
+      title: 'What\'s the weather like',
+      label: 'today?',
+      action: 'What\'s the weather like today?',
+    },
+    {
+      title: 'Tell me a joke',
+      label: '',
+      action: 'Tell me a joke',
+    },
+    {
+      title: 'Explain quantum computing',
+      label: 'in simple terms',
+      action: 'Explain quantum computing in simple terms',
+    },
+  ];
+
+  // Use different actions based on mode
+  let suggestedActions;
+  if (isRegularPlusSemanticMode) {
+    suggestedActions = regularPlusSemanticActions;
+  } else if (isSemanticScholarMode) {
+    suggestedActions = semanticScholarActions;
+  } else {
+    suggestedActions = vectorDatabaseActions;
+  }
+  
+  console.log('[SuggestedActions] Using', 
+    isRegularPlusSemanticMode ? 'Regular + Semantic' : 
+    isSemanticScholarMode ? 'Semantic Scholar' : 'Vector Database', 
+    'actions'
+  );
 
   return (
     <div
@@ -96,12 +137,16 @@ function PureSuggestedActions({
                 parts: [{ type: 'text', text: suggestedAction.action }],
               });
             }}
-            className="text-left border rounded-xl px-4 py-3.5 text-sm flex-1 gap-1 sm:flex-col w-full h-auto justify-start items-start"
+            className="h-auto p-3 text-left"
           >
-            <span className="font-medium">{suggestedAction.title}</span>
-            <span className="text-muted-foreground">
-              {suggestedAction.label}
-            </span>
+            <div className="flex flex-col gap-1">
+              <div className="font-medium text-sm">
+                {suggestedAction.title}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {suggestedAction.label}
+              </div>
+            </div>
           </Button>
         </motion.div>
       ))}
@@ -109,15 +154,4 @@ function PureSuggestedActions({
   );
 }
 
-export const SuggestedActions = memo(
-  PureSuggestedActions,
-  (prevProps, nextProps) => {
-    if (prevProps.chatId !== nextProps.chatId) return false;
-    if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType)
-      return false;
-    if (prevProps.isSemanticScholarMode !== nextProps.isSemanticScholarMode)
-      return false;
-
-    return true;
-  },
-);
+export const SuggestedActions = memo(PureSuggestedActions);

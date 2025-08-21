@@ -236,8 +236,14 @@ export async function getChatById({ id }: { id: string }) {
   try {
     console.log(`[getChatById] Attempting to get chat ${id}`);
     const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    console.log(`[getChatById] Successfully retrieved chat ${id}`);
-    return selectedChat;
+    
+    if (selectedChat) {
+      console.log(`[getChatById] Successfully retrieved chat ${id}`);
+      return selectedChat;
+    } else {
+      console.log(`[getChatById] No chat found for id ${id}`);
+      return null;
+    }
   } catch (error) {
     console.error(`[getChatById] Error getting chat ${id}:`, error);
     // Return null instead of throwing error to prevent frontend crashes

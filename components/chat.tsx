@@ -24,6 +24,8 @@ import type { Attachment, ChatMessage } from '@/lib/types';
 import { useDataStream } from './data-stream-provider';
 import { SemanticScholarToggle } from './semantic-scholar-toggle';
 
+type ChatMode = 'regular' | 'semantic' | 'regular-plus-semantic';
+
 export function Chat({
   id,
   initialMessages,
@@ -50,9 +52,9 @@ export function Chat({
   const { setDataStream } = useDataStream();
 
   const [input, setInput] = useState<string>('');
-  const [isSemanticScholarMode, setIsSemanticScholarMode] = useState(false);
+  const [chatMode, setChatMode] = useState<ChatMode>('regular');
 
-  console.log('[Chat] isSemanticScholarMode:', isSemanticScholarMode);
+  console.log('[Chat] chatMode:', chatMode);
 
   // Create separate chat instances for each mode
   const regularChat = useChat<ChatMessage>({
@@ -127,6 +129,45 @@ export function Chat({
     },
   });
 
+  const regularPlusSemanticChat = useChat<ChatMessage>({
+    id, // Use the same ID as regular chat
+    messages: initialMessages,
+    experimental_throttle: 100,
+    generateId: generateUUID,
+    transport: new DefaultChatTransport({
+      api: '/api/regular-plus-semantic',
+      fetch: fetchWithErrorHandlers,
+      prepareSendMessagesRequest({ messages, id, body }) {
+        return {
+          body: {
+            id,
+            message: messages.at(-1),
+            selectedChatModel: initialChatModel,
+            selectedVisibilityType: visibilityType,
+            ...body,
+          },
+        };
+      },
+    }),
+    onData: (dataPart) => {
+      console.log('[REGULAR-PLUS-SEMANTIC] Received data part:', dataPart);
+      setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+    },
+    onFinish: () => {
+      console.log('[REGULAR-PLUS-SEMANTIC] Chat finished');
+      mutate(unstable_serialize(getChatHistoryPaginationKey));
+    },
+    onError: (error) => {
+      console.error('[REGULAR-PLUS-SEMANTIC] Chat error:', error);
+      if (error instanceof ChatSDKError) {
+        toast({
+          type: 'error',
+          description: error.message,
+        });
+      }
+    },
+  });
+
   // Use the appropriate chat instance based on mode
   const {
     messages,
@@ -136,7 +177,16 @@ export function Chat({
     stop,
     regenerate,
     resumeStream,
-  } = isSemanticScholarMode ? semanticScholarChat : regularChat;
+  } = chatMode === 'semantic' 
+    ? semanticScholarChat 
+    : chatMode === 'regular-plus-semantic'
+    ? regularPlusSemanticChat
+    : regularChat;
+
+  // Debug logging for messages
+  console.log('[Chat] Current mode:', chatMode);
+  console.log('[Chat] Messages count:', messages.length);
+  console.log('[Chat] Status:', status);
 
   const searchParams = useSearchParams();
   const query = searchParams.get('query');
@@ -170,6 +220,11 @@ export function Chat({
     setMessages,
   });
 
+  const handleModeToggle = (mode: ChatMode) => {
+    setChatMode(mode);
+    console.log('[Chat] Mode changed to:', mode);
+  };
+
   return (
     <>
       <div className="flex flex-col min-w-0 h-dvh bg-background">
@@ -198,8 +253,9 @@ export function Chat({
 
             <div className="border-t bg-background p-4">
               <SemanticScholarToggle
-                isSemanticScholarMode={isSemanticScholarMode}
-                onToggle={setIsSemanticScholarMode}
+                isSemanticScholarMode={chatMode === 'semantic'}
+                isRegularPlusSemanticMode={chatMode === 'regular-plus-semantic'}
+                onToggle={handleModeToggle}
               />
               
               <MultimodalInput
@@ -215,9 +271,10 @@ export function Chat({
                 setMessages={setMessages}
                 isReadonly={isReadonly}
                 selectedVisibilityType={visibilityType}
-                isSemanticScholarMode={isSemanticScholarMode}
+                isSemanticScholarMode={chatMode === 'semantic'}
+                isRegularPlusSemanticMode={chatMode === 'regular-plus-semantic'}
               />
-              {console.log('[Chat] Passing isSemanticScholarMode to MultimodalInput:', isSemanticScholarMode)}
+              {console.log('[Chat] Passing chatMode to MultimodalInput:', chatMode)}
             </div>
           </div>
         </div>

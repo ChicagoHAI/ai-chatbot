@@ -34,7 +34,17 @@ export async function fetchWithErrorHandlers(
     const response = await fetch(input, init);
 
     if (!response.ok) {
-      const { code, cause } = await response.json();
+      // Try to parse as JSON first, fallback to text
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch {
+        // If JSON parsing fails, get the text
+        const errorText = await response.text();
+        errorData = { code: 'unknown_error', cause: errorText };
+      }
+      
+      const { code, cause } = errorData;
       throw new ChatSDKError(code as ErrorCode, cause);
     }
 
